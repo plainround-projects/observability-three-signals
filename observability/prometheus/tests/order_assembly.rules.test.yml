@@ -1,0 +1,45 @@
+# Replays two scenarios through the rule file with promtool: 60 requests a minute, first with 5% slower than a
+# second (the planted fault) and then with none slower. Run with: make test-rules
+rule_files:
+  - ../rules/order_assembly.rules.yml
+
+evaluation_interval: 15s
+
+tests:
+  - name: one request in twenty slower than a second fires the alert after its for-duration
+    interval: 15s
+    input_series:
+      # 15 requests per 15 s scrape; 95% (14.25 on average) land at or below 1.0 s. Cumulative counters.
+      - series: 'order_assembly_duration_seconds_count{order_item_count_bucket="3-5"}'
+        values: "0+15x40"
+      - series: 'order_assembly_duration_seconds_bucket{le="1.0",order_item_count_bucket="3-5"}'
+        values: "0+14.25x40"
+      - series: 'order_assembly_duration_seconds_bucket{le="+Inf",order_item_count_bucket="3-5"}'
+        values: "0+15x40"
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: OrderAssemblySlowShareHigh
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: OrderAssemblySlowShareHigh
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+            exp_annotations:
+              summary: More than 2% of order assemblies take longer than one second.
+              description: "5% of order assemblies over the last 2 minutes took longer than 1 s."
+              runbook: Open the order assembly p95 panel, click an exemplar dot on the spike, and read the slowest span's logs.
+
+  - name: fast traffic keeps the alert silent
+    interval: 15s
+    input_series:
+      - series: 'order_assembly_duration_seconds_count{order_item_count_bucket="1-2"}'
+        values: "0+15x40"
+      - series: 'order_assembly_duration_seconds_bucket{le="1.0",order_item_count_bucket="1-2"}'
+        values: "0+15x40"
+      - series: 'order_assembly_duration_seconds_bucket{le="+Inf",order_item_count_bucket="1-2"}'
+        values: "0+15x40"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: OrderAssemblySlowShareHigh
+        exp_alerts: []
