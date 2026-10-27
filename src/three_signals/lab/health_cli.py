@@ -24,7 +24,7 @@ def _http_ok(url: str) -> bool:
 def main() -> int:
     """Print one line per check and exit 1 when any fails."""
     settings = LabSettings.from_env(os.environ)
-    collector_port = os.environ.get("COLLECTOR_HEALTH_HOST_PORT", "13133")
+    collector_port = os.environ.get("COLLECTOR_HEALTH_HOST_PORT", "23133")
     checks: list[tuple[str, bool]] = [
         ("front /healthz", _http_ok(f"{settings.front_url}/healthz")),
         ("collector health_check", _http_ok(f"http://127.0.0.1:{collector_port}/")),

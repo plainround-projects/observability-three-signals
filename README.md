@@ -19,7 +19,7 @@ Two small services (a front that calls a back that queries PostgreSQL), instrume
 | Images | `postgres:16.4-alpine`, `otel/opentelemetry-collector-contrib:0.111.0`, `grafana/tempo:2.6.1`, `prom/prometheus:v2.54.1`, `grafana/loki:3.1.1`, `grafana/grafana:11.2.0` (the versions the lesson names; `python:3.12.8-slim-bookworm` is the base of the service image) | pulled by Docker on first `make up` |
 | Python packages | Flask, waitress, psycopg 3, requests and the OpenTelemetry distro, exporters and instrumentations (Flask, requests, psycopg) at run time; pytest, pytest-cov, ruff, mypy, import-linter, pip-audit for development. All pinned with hashes in `requirements.lock` and `requirements-dev.lock`; `make` installs them into `.venv/` | everything |
 
-No cloud account, no secrets. The values in `.env.example` are local-only placeholders; `make up` copies them to `.env`. The stack needs about 2 GB of memory for Docker. Every port is bound to `127.0.0.1`; the defaults are Grafana 3000, Prometheus 9090, Tempo 3200, Loki 3100, the Collector's OTLP/HTTP 4318 and health 13133, and the front service 28081. Change any of them in `.env` if the port is taken.
+No cloud account, no secrets. The values in `.env.example` are local-only placeholders; `make up` copies them to `.env`. The stack needs about 2 GB of memory for Docker. Every port is bound to `127.0.0.1`; the defaults are Grafana 23000, Prometheus 29090, Tempo 23200, Loki 23100, the Collector's OTLP/HTTP 24318 and health 23133, and the front service 28081. Change any of them in `.env` if the port is taken.
 
 ## Setup, run, test, stop
 
@@ -36,7 +36,7 @@ make audit              # known-vulnerability check of the locked dependencies
 make down               # stops everything and deletes its data
 ```
 
-`make help` lists every target. Open Grafana at <http://localhost:3000> (user `admin`, password `GRAFANA_ADMIN_PASSWORD` from `.env`) and the dashboard "Three signals" to do the walk by hand; `make follow` does the same clicks through the stores' APIs and prints them.
+`make help` lists every target. Open Grafana at <http://localhost:23000> (user `admin`, password `GRAFANA_ADMIN_PASSWORD` from `.env`) and the dashboard "Three signals" to do the walk by hand; `make follow` does the same clicks through the stores' APIs and prints them.
 
 What `make up` ends with, and what `make run` prints (trace ids, times and the exact slow request vary; this run was on a heavily loaded laptop, so every absolute time is larger than yours will be, and the planted 1.5 s fault is smaller than the noise around it):
 

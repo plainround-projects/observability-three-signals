@@ -23,10 +23,10 @@ class LabSettings:
         """Derive every URL from the same ``*_HOST_PORT`` variables the compose file publishes."""
         return cls(
             front_url=f"http://127.0.0.1:{env.get('FRONT_HOST_PORT', '28081')}",
-            prometheus_url=f"http://127.0.0.1:{env.get('PROMETHEUS_HOST_PORT', '9090')}",
-            tempo_url=f"http://127.0.0.1:{env.get('TEMPO_HOST_PORT', '3200')}",
-            loki_url=f"http://127.0.0.1:{env.get('LOKI_HOST_PORT', '3100')}",
-            grafana_url=f"http://127.0.0.1:{env.get('GRAFANA_HOST_PORT', '3000')}",
+            prometheus_url=f"http://127.0.0.1:{env.get('PROMETHEUS_HOST_PORT', '29090')}",
+            tempo_url=f"http://127.0.0.1:{env.get('TEMPO_HOST_PORT', '23200')}",
+            loki_url=f"http://127.0.0.1:{env.get('LOKI_HOST_PORT', '23100')}",
+            grafana_url=f"http://127.0.0.1:{env.get('GRAFANA_HOST_PORT', '23000')}",
             grafana_user="admin",
             grafana_password=env.get("GRAFANA_ADMIN_PASSWORD", ""),
         )
