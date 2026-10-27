@@ -1,0 +1,111 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "observability-three-signals"
+version = "0.1.0"
+description = "Two small services (front and back) and a database, instrumented with OpenTelemetry; traces, metrics and logs flow through a Collector to Tempo, Prometheus and Loki, and Grafana follows a latency spike to its trace and its logs."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Sumit Srivastava" }]
+dependencies = [
+    "flask>=3.1,<4",
+    "waitress>=3.0,<4",
+    "psycopg[binary]>=3.2,<4",
+    "psycopg-pool>=3.2,<4",
+    "requests>=2.32,<3",
+    "opentelemetry-distro>=0.66b1",
+    "opentelemetry-exporter-otlp-proto-http>=1.45,<2",
+    "opentelemetry-instrumentation-flask>=0.66b1",
+    "opentelemetry-instrumentation-requests>=0.66b1",
+    "opentelemetry-instrumentation-psycopg>=0.66b1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<10",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "import-linter>=2.0",
+    "pip-audit>=2.7",
+    "types-requests",
+    "types-PyYAML",
+    "pyyaml>=6",
+]
+
+[project.scripts]
+three-signals-back = "three_signals.interfaces.back_main:main"
+three-signals-front = "three_signals.interfaces.front_main:main"
+three-signals-health = "three_signals.interfaces.health_cli:main"
+three-signals-scenario = "three_signals.lab.scenario_cli:main"
+three-signals-follow = "three_signals.lab.follow_cli:main"
+three-signals-stack-health = "three_signals.lab.health_cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "N", "C4", "RUF", "PT", "D100", "D101", "D103", "D104"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["opentelemetry.*", "waitress", "waitress.*"]
+ignore_missing_imports = true
+
+# Test functions are named for the behavior they check; annotating every one adds noise, not safety.
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "integration: needs the stack from docker-compose.yml (make up)",
+    "e2e: runs the lesson's scenario against the stack and queries the three stores",
+]
+
+[tool.coverage.run]
+source = ["three_signals"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+
+[tool.importlinter]
+root_package = "three_signals"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Layers: interfaces and lab -> infrastructure -> application -> domain, never upward"
+type = "layers"
+layers = [
+    "three_signals.interfaces | three_signals.lab",
+    "three_signals.infrastructure",
+    "three_signals.application",
+    "three_signals.domain",
+]
+
+[[tool.importlinter.contracts]]
+name = "Domain and application know nothing about web, database or telemetry libraries"
+type = "forbidden"
+source_modules = ["three_signals.domain", "three_signals.application"]
+forbidden_modules = ["flask", "psycopg", "psycopg_pool", "requests", "opentelemetry", "waitress"]

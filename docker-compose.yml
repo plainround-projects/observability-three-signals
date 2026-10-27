@@ -1,0 +1,168 @@
+# The whole lab on one laptop: two services, a database, a Collector and the three backends behind Grafana.
+# Every host port is bound to 127.0.0.1 only. Versions are pinned to the ones the lesson names.
+name: observability-three-signals
+
+x-service-environment: &service-environment
+  BIND_HOST: 0.0.0.0
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+  OTEL_TRACES_EXPORTER: otlp
+  OTEL_METRICS_EXPORTER: otlp
+  OTEL_LOGS_EXPORTER: otlp
+  OTEL_METRIC_EXPORT_INTERVAL: "5000"
+  OTEL_RESOURCE_ATTRIBUTES: service.version=0.1.0,deployment.environment=local
+  OTEL_PYTHON_FLASK_EXCLUDED_URLS: healthz
+  OTEL_PYTHON_REQUESTS_EXCLUDED_URLS: healthz
+  LOG_LEVEL: INFO
+
+services:
+  postgres:
+    image: postgres:16.4-alpine
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run make up, which creates .env from .env.example}
+      POSTGRES_DB: orders
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # TCP, not the socket: the temporary server that runs the init scripts listens on the socket only.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d orders"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./observability/collector/config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "127.0.0.1:${OTLP_HTTP_HOST_PORT:-4318}:4318"
+      - "127.0.0.1:${COLLECTOR_HEALTH_HOST_PORT:-13133}:13133"
+    depends_on:
+      tempo: { condition: service_healthy }
+      prometheus: { condition: service_healthy }
+      loki: { condition: service_healthy }
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./observability/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "127.0.0.1:${TEMPO_HOST_PORT:-3200}:3200"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3200/ready | grep -q ready"]
+      interval: 10s
+      timeout: 10s
+      retries: 60
+      start_period: 30s
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=2d
+      - --enable-feature=exemplar-storage
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}:9090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 10s
+      retries: 60
+      start_period: 30s
+
+  loki:
+    image: grafana/loki:3.1.1
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./observability/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "127.0.0.1:${LOKI_HOST_PORT:-3100}:3100"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3100/ready | grep -q ready"]
+      interval: 10s
+      timeout: 10s
+      retries: 60
+      start_period: 30s
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?run make up, which creates .env from .env.example}
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:${GRAFANA_HOST_PORT:-3000}:3000"
+    depends_on:
+      tempo: { condition: service_healthy }
+      prometheus: { condition: service_healthy }
+      loki: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/health | grep -q ok"]
+      interval: 10s
+      timeout: 10s
+      retries: 60
+      start_period: 30s
+
+  back:
+    build: .
+    image: observability-three-signals:dev
+    command: ["opentelemetry-instrument", "three-signals-back"]
+    environment:
+      <<: *service-environment
+      OTEL_SERVICE_NAME: back
+      BACK_PORT: "8081"
+      DATABASE_URL: postgresql://orders_reader:${ORDERS_READER_PASSWORD:?run make up}@postgres:5432/orders
+      SLOW_QUERY_PROBABILITY: ${SLOW_QUERY_PROBABILITY:-0.05}
+      SLOW_QUERY_SECONDS: ${SLOW_QUERY_SECONDS:-1.5}
+      SLOW_QUERY_SEED: ${SLOW_QUERY_SEED:-}
+    depends_on:
+      postgres: { condition: service_healthy }
+      otel-collector: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "three-signals-health", "--url", "http://localhost:8081/healthz", "--timeout", "10"]
+      interval: 10s
+      timeout: 20s
+      retries: 30
+      start_period: 60s
+    stop_grace_period: 15s
+
+  front:
+    build: .
+    image: observability-three-signals:dev
+    command: ["opentelemetry-instrument", "three-signals-front"]
+    environment:
+      <<: *service-environment
+      OTEL_SERVICE_NAME: front
+      FRONT_PORT: "8080"
+      BACK_URL: http://back:8081
+    ports:
+      - "127.0.0.1:${FRONT_HOST_PORT:-28081}:8080"
+    depends_on:
+      back: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "three-signals-health", "--url", "http://localhost:8080/healthz", "--timeout", "10"]
+      interval: 10s
+      timeout: 20s
+      retries: 30
+      start_period: 60s
+    stop_grace_period: 15s
+
+volumes:
+  postgres-data:
+  tempo-data:
+  prometheus-data:
+  loki-data:
+  grafana-data:
