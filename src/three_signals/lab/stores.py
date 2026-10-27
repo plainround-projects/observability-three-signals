@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -44,6 +45,13 @@ class LogLine:
     line: str
     labels: Mapping[str, str]
     structured_metadata: Mapping[str, str]
+
+
+def is_complete(spans: list[SpanView]) -> bool:
+    """True when the spans form one tree: exactly one root, and every other span's parent is present."""
+    span_ids = {span.span_id for span in spans}
+    roots = [span for span in spans if not span.parent_span_id]
+    return len(roots) == 1 and all(span.parent_span_id in span_ids for span in spans if span.parent_span_id)
 
 
 def _get(url: str, **kwargs: Any) -> requests.Response:
@@ -175,17 +183,28 @@ class TempoClient:
             raise StoreError(f"Tempo search answered {response.status_code}: {response.text[:200]}")
         return [item["traceID"] for item in response.json().get("traces", [])]
 
-    def wait_for_trace(self, trace_id: str, timeout_seconds: float = 60.0) -> list[SpanView]:
-        """Poll until Tempo returns the trace, or raise ``StoreError`` after the timeout."""
+    def wait_for_trace(
+        self,
+        trace_id: str,
+        timeout_seconds: float = 60.0,
+        until: Callable[[list[SpanView]], bool] = lambda spans: is_complete(spans),
+    ) -> list[SpanView]:
+        """Poll until ``until`` accepts the trace; raise ``StoreError`` if no span appears within the timeout.
+
+        The two services export their spans separately, so Tempo can know half a trace for a few seconds. By default a
+        trace is accepted when every span's parent is in it; callers that know which services must appear say so. At the
+        deadline the spans found so far are returned.
+        """
         deadline = time.monotonic() + timeout_seconds
+        found: list[SpanView] = []
         while time.monotonic() < deadline:
-            try:
-                spans = self.trace(trace_id)
-            except StoreError:
-                spans = None  # a slow or restarting Tempo is retried until the deadline
-            if spans:
-                return spans
+            with contextlib.suppress(StoreError):  # a slow or restarting Tempo is retried until the deadline
+                found = self.trace(trace_id) or found
+            if found and until(found):
+                return found
             time.sleep(1.0)
+        if found:
+            return found
         raise StoreError(f"trace {trace_id} did not appear in Tempo within {timeout_seconds:.0f}s")
 
 
@@ -210,7 +229,9 @@ class LokiClient:
             "limit": limit,
             "direction": "forward",
         }
-        response = _get(f"{self._base}/loki/api/v1/query_range", params=params)
+        # Without this flag Loki leaves structured metadata (where the OTLP trace_id lives) out of the response.
+        headers = {"X-Loki-Response-Encoding-Flags": "categorize-labels"}
+        response = _get(f"{self._base}/loki/api/v1/query_range", params=params, headers=headers)
         if response.status_code != 200:
             raise StoreError(f"Loki answered {response.status_code}: {response.text[:200]}")
         lines: list[LogLine] = []

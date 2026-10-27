@@ -1,6 +1,8 @@
 import base64
 
-from three_signals.lab.stores import TempoClient, _id_to_hex
+import pytest
+
+from three_signals.lab.stores import SpanView, StoreError, TempoClient, _id_to_hex, is_complete
 
 TRACE_JSON = {
     "batches": [
@@ -47,3 +49,42 @@ def test_a_tempo_trace_document_is_flattened_into_span_views():
     assert wide.attributes["db.statement"] == "SELECT * FROM order_items"
     assert child.parent_span_id == wide.span_id
     assert child.attributes["n"] == "3"
+
+
+def _view(span_id, parent=""):
+    return SpanView("s", "back", span_id, parent, 1.0, {})
+
+
+def test_a_trace_is_complete_when_it_has_one_root_and_every_parent_is_present():
+    assert is_complete([_view("a"), _view("b", "a"), _view("c", "b")])
+    assert not is_complete([_view("b", "a")])
+    assert not is_complete([_view("a"), _view("c", "x")])
+    assert not is_complete([_view("a"), _view("z")])
+
+
+def test_waiting_for_a_trace_returns_once_the_late_spans_have_arrived(monkeypatch):
+    class Slow(TempoClient):
+        def __init__(self):
+            super().__init__("http://x")
+            self.answers = [None, [_view("b", "a")], [_view("a"), _view("b", "a")]]
+
+        def trace(self, trace_id):
+            return self.answers.pop(0)
+
+    monkeypatch.setattr("time.sleep", lambda seconds: None)
+    assert [span.span_id for span in Slow().wait_for_trace("t", 30)] == ["a", "b"]
+
+
+def test_waiting_for_a_trace_that_never_appears_raises_and_one_that_stays_partial_returns_what_it_has(monkeypatch):
+    class Never(TempoClient):
+        def trace(self, trace_id):
+            return None
+
+    class Partial(TempoClient):
+        def trace(self, trace_id):
+            return [_view("b", "a")]
+
+    monkeypatch.setattr("time.sleep", lambda seconds: None)
+    with pytest.raises(StoreError):
+        Never("http://x").wait_for_trace("t", 0.05)
+    assert [span.span_id for span in Partial("http://x").wait_for_trace("t", 0.05)] == ["b"]

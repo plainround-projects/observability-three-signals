@@ -5,6 +5,7 @@ import pytest
 from three_signals.lab.follow import (
     follow_slow_request,
     follow_with_patience,
+    has_both_services,
     log_trace_id,
     render,
     slowest_database_span,
@@ -35,7 +36,7 @@ class Metrics:
 
 
 class Traces:
-    def wait_for_trace(self, trace_id, timeout_seconds=60.0):
+    def wait_for_trace(self, trace_id, timeout_seconds=60.0, until=None):
         return [
             _span("GET /order/{id}", 1520, service="front"),
             _span("SELECT", 2, "SELECT * FROM orders WHERE id = %s"),
@@ -134,3 +135,37 @@ def test_patience_gives_up_with_the_last_error_after_the_deadline():
         follow_with_patience(
             Metrics(points=()), Traces(), Logs(), 30, clock=lambda: next(clock), sleep=lambda seconds: None
         )
+
+
+def test_an_exemplar_whose_database_span_is_fast_is_skipped_for_one_whose_span_is_slow():
+    class PerTrace(Traces):
+        def wait_for_trace(self, trace_id, timeout_seconds=60.0, until=None):
+            width = 1502 if trace_id == TRACE_ID else 40
+            return [
+                _span("GET /order/{id}", 9000, service="front"),
+                _span("SELECT", width, "SELECT oi FROM order_items"),
+            ]
+
+    queued = Exemplar("c" * 32, 9.0, 150.0)
+    metrics = Metrics(exemplars=[Exemplar(TRACE_ID, 1.502, 161.0), queued])
+    result = follow_slow_request(metrics, PerTrace(), Logs(), now=300.0)
+    assert result.exemplar.trace_id == TRACE_ID
+    assert result.slow_span.duration_ms == 1502
+
+
+def test_when_no_exemplar_has_a_slow_database_span_the_widest_one_is_reported():
+    class AllFast(Traces):
+        def wait_for_trace(self, trace_id, timeout_seconds=60.0, until=None):
+            width = 300 if trace_id == TRACE_ID else 40
+            return [_span("SELECT", width, "SELECT oi FROM order_items")]
+
+    metrics = Metrics(exemplars=[Exemplar("c" * 32, 9.0, 150.0), Exemplar(TRACE_ID, 1.2, 161.0)])
+    assert follow_slow_request(metrics, AllFast(), Logs(), now=300.0).exemplar.trace_id == TRACE_ID
+
+
+def test_a_trace_counts_as_whole_for_the_walk_only_with_spans_from_both_services():
+    front = SpanView("GET", "front", "a", "", 5.0, {})
+    back = SpanView("GET", "back", "b", "a", 3.0, {})
+    assert has_both_services([front, back])
+    assert not has_both_services([front])
+    assert not has_both_services([back])

@@ -8,11 +8,12 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
-from three_signals.lab.stores import Exemplar, LogLine, SpanView, StoreError
+from three_signals.lab.stores import Exemplar, LogLine, SpanView, StoreError, is_complete
 
 P95_EXPRESSION = "histogram_quantile(0.95, sum by (le) (rate(order_assembly_duration_seconds_bucket[1m])))"
 EXEMPLAR_SELECTOR = "order_assembly_duration_seconds_bucket"
 SLOW_SPAN_SECONDS = 1.0
+MAX_TRACES_OPENED = 10
 
 
 class MetricSource(Protocol):
@@ -30,8 +31,10 @@ class MetricSource(Protocol):
 class TraceSource(Protocol):
     """The Tempo calls the walk-through needs."""
 
-    def wait_for_trace(self, trace_id: str, timeout_seconds: float = ...) -> list[SpanView]:
-        """The spans of one trace."""
+    def wait_for_trace(
+        self, trace_id: str, timeout_seconds: float = ..., until: Callable[[list[SpanView]], bool] = ...
+    ) -> list[SpanView]:
+        """The spans of one trace, once ``until`` accepts them."""
         ...
 
 
@@ -61,6 +64,11 @@ class Investigation:
         return frozenset(span.service for span in self.spans)
 
 
+def has_both_services(spans: list[SpanView]) -> bool:
+    """True when the trace is whole and holds spans from both front and back."""
+    return is_complete(spans) and {"front", "back"} <= {span.service for span in spans}
+
+
 def slowest_database_span(spans: list[SpanView]) -> SpanView:
     """The widest span that queried the order_items table."""
     candidates = [span for span in spans if "order_items" in str(span.attributes.get("db.statement", ""))]
@@ -82,6 +90,24 @@ def log_trace_id(line: LogLine) -> str:
     return str(body.get("trace_id", ""))
 
 
+def _open_until_a_slow_database_span(
+    traces: TraceSource, candidates: list[Exemplar]
+) -> tuple[Exemplar, list[SpanView], SpanView]:
+    """Open exemplar traces, slowest first, until one has a slow database span; else the one with the widest.
+
+    A slow assembly can also come from queueing or a busy host. The trace worth opening is the one whose database
+    span is slow, as it is when the planted fault, not the machine, made the request slow.
+    """
+    opened: list[tuple[Exemplar, list[SpanView], SpanView]] = []
+    for candidate in candidates[:MAX_TRACES_OPENED]:
+        spans = traces.wait_for_trace(candidate.trace_id, until=has_both_services)
+        slow_span = slowest_database_span(spans)
+        opened.append((candidate, spans, slow_span))
+        if slow_span.duration_ms >= SLOW_SPAN_SECONDS * 1000:
+            break
+    return max(opened, key=lambda item: item[2].duration_ms)
+
+
 def follow_slow_request(
     metrics: MetricSource,
     traces: TraceSource,
@@ -98,13 +124,14 @@ def follow_slow_request(
     peak_time, peak_value = max(points, key=lambda point: point[1])
 
     exemplars = metrics.exemplars(EXEMPLAR_SELECTOR, start, end)
-    slow_exemplars = [exemplar for exemplar in exemplars if exemplar.value >= SLOW_SPAN_SECONDS]
+    slow_exemplars = sorted(
+        (exemplar for exemplar in exemplars if exemplar.value >= SLOW_SPAN_SECONDS),
+        key=lambda candidate: candidate.value,
+        reverse=True,
+    )
     if not slow_exemplars:
         raise StoreError("no slow exemplar found; was the slow-query fault enabled?")
-    exemplar = max(slow_exemplars, key=lambda candidate: candidate.value)
-
-    spans = traces.wait_for_trace(exemplar.trace_id)
-    slow_span = slowest_database_span(spans)
+    exemplar, spans, slow_span = _open_until_a_slow_database_span(traces, slow_exemplars)
 
     lines = logs.query(f'{{service_name="back"}} | trace_id="{exemplar.trace_id}"', start, end + 60)
     if not lines:
