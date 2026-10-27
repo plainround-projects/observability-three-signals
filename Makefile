@@ -31,7 +31,7 @@ install: $(STAMP) ## create .venv from the lock file
 up: .env $(STAMP) ## build and start the whole stack, load the schema and seed data, wait until healthy
 	docker compose up -d --wait postgres
 	$(MAKE) --no-print-directory db
-	docker compose up -d --build --wait --wait-timeout 900
+	docker compose up -d --build --wait --wait-timeout 1800
 	$(MAKE) --no-print-directory health
 
 db: .env ## run sql/001_schema.sql and sql/002_seed.sql against the running database
