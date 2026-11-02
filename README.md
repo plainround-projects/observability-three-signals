@@ -38,7 +38,7 @@ make down               # stops everything and deletes its data
 
 `make help` lists every target. Open Grafana at <http://localhost:23000> (user `admin`, password `GRAFANA_ADMIN_PASSWORD` from `.env`) and the dashboard "Three signals" to do the walk by hand; `make follow` does the same clicks through the stores' APIs and prints them.
 
-What `make up` ends with, and what `make run` prints (trace ids, times and the exact slow request vary; this run was on a heavily loaded laptop, so every absolute time is larger than yours will be, and the planted 1.5 s fault is smaller than the noise around it):
+What `make up` ends with, and what `make run` prints (trace ids, times and the exact slow request vary; this is a clean-clone run on 2026-11-02 on a machine with a load average of about 13, after the stack came up on its own in about a minute):
 
 ```text
 $ make health
@@ -52,19 +52,23 @@ ok   grafana queries tempo: Tempo answered 200 through Grafana's proxy
 ok   grafana queries loki: Data source successfully connected.
 
 $ make run
-sent 240 requests in 79.9s: 0 failed, 58 slow (>= 1 s), median 323 ms, p95 5431 ms
-1. Latency panel: p95 peaks at 10000 ms at 01:56:11.
-2. Click the exemplar dot: trace 10451fca938a3ac49d7eefe8f4c734a5, a 10754 ms assembly.
-3. The trace spans back, front with 6 spans; the widest database span is 'SELECT' at 535 ms (SELECT oi.id, oi.sku, oi.quantity, oi.unit_price_cents FROM order_items AS oi CROSS JOIN pg_sleep(%(delay_seconds)s) WHERE oi.order_id = %(order_id)s ORDER BY oi.id).
-4. Click 'logs for this span': 3 lines carry trace_id=10451fca938a3ac49d7eefe8f4c734a5:
-     {"timestamp": "2026-10-27T01:55:48.813+00:00", "level": "info", "msg": "order_items query started", ..., "trace_id": "10451fca...", "span_id": "a2938fc74b0eaef6", "order_id": 332}
-     {"timestamp": "2026-10-27T01:55:57.172+00:00", "level": "warning", "msg": "slow query finished", ..., "trace_id": "10451fca...", "span_id": "a2938fc74b0eaef6", "order_id": 332, "duration_ms": 2338}
-     {"timestamp": "2026-10-27T01:55:57.510+00:00", "level": "info", "msg": "order assembled", ..., "trace_id": "10451fca...", "span_id": "f3e49090ed18b2ba", "order_id": 332, "item_count": 5, "bucket": "3-5"}
-5. Back the other way: the first log line's trace_id is 10451fca938a3ac49d7eefe8f4c734a5, the same trace.
+sent 600 requests in 59.9s: 0 failed, 35 slow (>= 1 s), median 7 ms, p95 1507 ms
+1. Latency panel: p95 peaks at 1372 ms at 10:30:01.
+2. Click the exemplar dot: trace 6278129b57f1bb9e918e45b93741cc68, a 1509 ms assembly.
+3. The trace spans back, front with 6 spans; the widest database span is 'SELECT' at 1504 ms (SELECT oi.id, oi.sku, oi.quantity, oi.unit_price_cents FROM order_items AS oi CROSS JOIN pg_sleep(%(delay_seconds)s) WHERE oi.order_id = %(order_id)s ORDER BY oi.id).
+4. Click 'logs for this span': 3 lines carry trace_id=6278129b57f1bb9e918e45b93741cc68:
+     {"timestamp": "2026-11-02T10:29:30.341+00:00", "level": "info", "msg": "order_items query started", ..., "trace_id": "6278129b...", "span_id": "6b8294d38f548f6c", "order_id": 650}
+     {"timestamp": "2026-11-02T10:29:31.845+00:00", "level": "warning", "msg": "slow query finished", ..., "trace_id": "6278129b...", "span_id": "6b8294d38f548f6c", "order_id": 650, "duration_ms": 1504}
+     {"timestamp": "2026-11-02T10:29:31.845+00:00", "level": "info", "msg": "order assembled", ..., "trace_id": "6278129b...", "span_id": "09308e687aee7344", "order_id": 650, "item_count": 1, "bucket": "1-2"}
+5. Back the other way: the first log line's trace_id is 6278129b57f1bb9e918e45b93741cc68, the same trace.
 ```
 
-The lesson's expected output on a quiet machine is a p95 flat near 8 ms with a spike to about 1,500 ms, a `SELECT order_items` span of about 1,500 ms and two log lines for it; this run could not show that cleanly because the host was saturated (load average above 50 on a 12-core Mac). The walk opens exemplar traces from the slowest down until one has a database span over a second wide, so a request that was slow only because the machine was busy is skipped.
+A calm machine gives what the lesson expects: a p95 flat near 8 ms (here a median of 7 ms) with a spike to about 1,500 ms, a `SELECT order_items` span of about 1,500 ms (1504 ms above) and the log lines for it. The walk opens exemplar traces from the slowest down until one has a database span over a second wide, so a request that was slow only because the machine was busy is skipped.
 
+
+## Verified
+
+In a fresh clone of the committed repository on 2026-11-02 (macOS, Docker 24.0.6, Python 3.13 for the lab tools; load average about 13 from other projects sharing the host): `make up` (0), `make run` (0, transcript above), `make check` (ruff, mypy, import-linter, 104 unit and configuration tests, promtool config and rule tests: all passed), `make test-integration` (7 passed), `make test-e2e` (7 passed in 85 s), `make down` (0), clean tree afterwards. Earlier, on a heavily loaded host, the same run passed integration 7 of 7 and end-to-end 7 of 7 as well.
 
 ## Done when: the lesson's checklist and the proof for each line
 
@@ -162,6 +166,7 @@ sql/                 001_schema.sql (DDL, role), 002_seed.sql (DML: 1,000 orders
 observability/       the Collector, Tempo, Prometheus (config, alert rule, promtool replay test), Loki and Grafana
                      (data sources, dashboard) as code.
 docs/adr/            decision records.
+tech/                one beginner-level note per technology the repository uses, with every file quoted and explained (start at tech/README.md).
 docker-compose.yml   the stack.               Dockerfile  the service image (non-root, base image pinned by digest).
 pyproject.toml       project metadata and every tool's configuration (ruff, mypy, pytest, import-linter).
 requirements*.lock   hash-pinned dependencies (runtime, and runtime plus development tools).
