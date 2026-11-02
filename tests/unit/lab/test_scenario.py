@@ -20,7 +20,10 @@ def _server(slow_ids=()):
         def log_message(self, *args):
             pass
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    class RoomyServer(ThreadingHTTPServer):
+        request_queue_size = 128  # the default of 5 refuses connections when eight workers connect at once
+
+    server = RoomyServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server, seen
 
