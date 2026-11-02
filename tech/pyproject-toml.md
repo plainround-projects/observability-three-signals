@@ -125,7 +125,7 @@ cat .venv/bin/three-signals-health
 Expected: a short Python script that imports `main` from `three_signals.interfaces.health_cli` and runs it.
 
 ```bash
-.venv/bin/pip show observability-three-signals | head -3
+.venv/bin/pip show observability-three-signals | grep -E "^(Name|Version)"
 ```
 
 Expected: `Name: observability-three-signals`, `Version: 0.1.0`.
