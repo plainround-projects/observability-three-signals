@@ -31,9 +31,10 @@ The `line-length` setting decides where the formatter breaks long lines. `target
 line-length = 120
 target-version = "py312"
 src = ["src", "tests"]
+extend-exclude = ["tech"]
 ```
 
-`line-length = 120` lets lines be up to 120 characters before the formatter wraps them. `target-version = "py312"` means "assume Python 3.12 syntax is allowed". `src = ["src", "tests"]` tells the import sorter that `three_signals` (under `src`) is first-party code, so it sorts its imports in a separate group after the third-party ones.
+`line-length = 120` lets lines be up to 120 characters before the formatter wraps them. `target-version = "py312"` means "assume Python 3.12 syntax is allowed". `src = ["src", "tests"]` tells the import sorter that `three_signals` (under `src`) is first-party code, so it sorts its imports in a separate group after the third-party ones. `extend-exclude = ["tech"]` leaves this `tech/` folder out of every Ruff command. Ruff 0.17 also formats the Python code blocks inside Markdown files, and these notes quote excerpts of the code (single functions, a few lines, sometimes indented) that are not complete programs, so reformatting them would change the quotes.
 
 ```toml
 [tool.ruff.lint]
@@ -61,7 +62,7 @@ format: $(STAMP) ## apply ruff's formatting and safe fixes
 	$(VENV)/bin/ruff format .
 ```
 
-`make lint` runs `ruff check .` (look at every file under the current folder), `ruff format --check .` (fail if any file would be reformatted), and `make format` runs the fixing versions. Example of why this matters: the test helper `RoomyServer` and its comment fit within 120 characters, and the formatter keeps two blank lines between top-level definitions.
+`make lint` runs `ruff check .` (look at every file under the current folder), `ruff format --check .` (fail if any file would be reformatted), and `make format` runs the fixing versions. The formatter also decides things like where a long call is wrapped and keeps two blank lines between top-level definitions, so a reader never sees two styles.
 
 ## Try it yourself
 
