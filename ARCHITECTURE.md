@@ -20,6 +20,8 @@ the OpenTelemetry Collector, Tempo, Prometheus, Loki, and Grafana reading the th
 
 ## Data flow
 
+Drawn versions of this figure and of the walk-through: [the architecture](docs/diagrams/architecture.svg) and [one run](docs/diagrams/flow.svg).
+
 ```mermaid
 flowchart LR
     client([scenario / curl]) -->|GET /order/id| front

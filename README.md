@@ -9,6 +9,24 @@ Two small services (a front that calls a back that queries PostgreSQL), instrume
 | **Level** | Beginner |
 | **Architecture** | [ARCHITECTURE.md](ARCHITECTURE.md), decisions in [docs/adr](docs/adr) |
 
+## Architecture
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture-dark.svg">
+  <img alt="A scenario or curl calls front, which calls back, which queries PostgreSQL. Front and back send spans, metrics and logs to the OpenTelemetry Collector, which feeds Tempo, Prometheus and Loki, and Grafana reads all three." src="docs/diagrams/architecture.svg">
+</picture>
+
+Both services talk only to the Collector for telemetry, and Grafana is where the three signals meet; the amber edge is the planted slow query.
+
+## How one run flows
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/flow-dark.svg">
+  <img alt="One GET /order/3 goes front, back, PostgreSQL, with a traceparent header and a trace id on the metric, the log and the span, then Grafana follows the p95 spike down to the slow span and its log lines." src="docs/diagrams/flow.svg">
+</picture>
+
+Amber is the planted fault, one request in twenty sleeping 1.5 s in the second query; the green box is the click path ending on the slow span and its logs.
+
 ## Prerequisites
 
 | Tool | Version | Used for |
